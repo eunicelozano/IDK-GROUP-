@@ -2,214 +2,183 @@
 session_start();
 include '../config.php';
 
-// Only admin allowed
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
     header("Location: ../login.php");
     exit;
 }
 
-/* ------------------------------------------------------
-   SUMMARY STATISTICS
------------------------------------------------------- */
+// =====================
+// DASHBOARD STATS
+// =====================
 
-// Total customers
-$total_customers = 0;
-$res = $conn->query("SELECT COUNT(*) AS c FROM users WHERE role='customer'");
-if ($res && $row = $res->fetch_assoc()) $total_customers = $row['c'];
+$total_customers = $conn->query("SELECT COUNT(*) AS c FROM users WHERE role='customer'")->fetch_assoc()['c'];
+$total_items = $conn->query("SELECT COUNT(*) AS c FROM items")->fetch_assoc()['c'];
+$total_orders = $conn->query("SELECT COUNT(*) AS c FROM orders")->fetch_assoc()['c'];
 
-// Total items
-$total_items = 0;
-$res = $conn->query("SELECT COUNT(*) AS c FROM items");
-if ($res && $row = $res->fetch_assoc()) $total_items = $row['c'];
-
-// Total orders
-$total_orders = 0;
-$res = $conn->query("SELECT COUNT(*) AS c FROM orders");
-if ($res && $row = $res->fetch_assoc()) $total_orders = $row['c'];
-
-// Total revenue (PAID)
-$total_revenue = 0;
-$res = $conn->query("
-    SELECT COALESCE(SUM(amount), 0) AS total 
+$total_revenue = $conn->query("
+    SELECT COALESCE(SUM(amount),0) AS total 
     FROM payments 
-    WHERE payment_status = 'Paid'
-");
-if ($res && $row = $res->fetch_assoc()) $total_revenue = $row['total'];
+    WHERE payment_status='Paid'
+")->fetch_assoc()['total'];
 
-/* ------------------------------------------------------
-   NEW! SALES & INVENTORY REPORT
------------------------------------------------------- */
+// =====================
+// RECENT ORDERS
+// =====================
 
-// Pending payments
-$pending_payments = 0;
-$res = $conn->query("
-    SELECT COALESCE(SUM(amount), 0) AS total 
-    FROM payments 
-    WHERE payment_status = 'Pending'
-");
-if ($res && $row = $res->fetch_assoc()) $pending_payments = $row['total'];
-
-// Inventory total value
-$inventory_value = 0;
-$res = $conn->query("
-    SELECT COALESCE(SUM(stock * purchase_price), 0) AS total 
-    FROM items
-");
-if ($res && $row = $res->fetch_assoc()) $inventory_value = $row['total'];
-
-// Out of stock
-$out_of_stock = 0;
-$res = $conn->query("SELECT COUNT(*) AS c FROM items WHERE stock = 0");
-if ($res && $row = $res->fetch_assoc()) $out_of_stock = $row['c'];
-
-// Low stock (< 5)
-$low_stock = 0;
-$res = $conn->query("SELECT COUNT(*) AS c FROM items WHERE stock < 5");
-if ($res && $row = $res->fetch_assoc()) $low_stock = $row['c'];
-
-/* ------------------------------------------------------
-   RECENT ORDERS
------------------------------------------------------- */
-$recent_orders = [];
-$sql = "
+$recent_orders = $conn->query("
     SELECT o.order_id, o.order_date, o.order_status, o.total_amount, u.username
     FROM orders o
     JOIN users u ON o.user_id = u.user_id
     ORDER BY o.order_date DESC
     LIMIT 5
-";
-$res = $conn->query($sql);
-if ($res) while ($row = $res->fetch_assoc()) $recent_orders[] = $row;
+");
 
-/* ------------------------------------------------------
-   INVENTORY LIST
------------------------------------------------------- */
-$items = [];
-$res = $conn->query("SELECT * FROM items ORDER BY created_at DESC");
-if ($res) while ($row = $res->fetch_assoc()) $items[] = $row;
+// =====================
+// INVENTORY
+// =====================
 
+$items = $conn->query("SELECT * FROM items ORDER BY created_at DESC");
+
+// =====================
+// RENTAL MONITORING (NEW)
+// =====================
+
+$rentals = $conn->query("
+    SELECT 
+        od.order_detail_id,
+        o.order_id,
+        i.name AS item_name,
+        u.username,
+        od.return_status
+    FROM order_details od
+    JOIN orders o ON od.order_id = o.order_id
+    JOIN items i ON od.item_id = i.item_id
+    JOIN users u ON o.user_id = u.user_id
+    WHERE od.order_type = 'Rental'
+    ORDER BY o.order_date DESC
+");
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Admin Dashboard - GOWN&GO</title>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
-  <link href="styles/dashboard.css" rel="stylesheet"> 
+<meta charset="UTF-8">
+<title>Admin Dashboard - GOWN&GO</title>
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="inclusion/stylesheet.css">
+
+<style>
+h2.section-title {
+    font-family: 'Playfair Display', serif;
+    color: #d86ca1;
+}
+.btn-small {
+    padding: 5px 10px;
+    background: #d86ca1;
+    color: white;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    text-decoration: none;
+}
+.btn-small:hover { background:#b3548a; }
+.status-completed { color:green; font-weight:bold; }
+.status-returned { color:green; font-weight:bold; }
+.status-not-returned { color:red; font-weight:bold; }
+</style>
 </head>
+
 <body>
 
-<header class="topbar">
-  <div class="logo">GOWN&GO Admin</div>
-  <div class="nav-links">
-    Hi, <?php echo htmlspecialchars($_SESSION['username']); ?>
-    &nbsp; | &nbsp;
-    <a href="../index.php">View Site</a>
-    &nbsp; | &nbsp;
-    <a href="../logout.php">Logout</a>
-  </div>
-</header>
+<?php include 'inclusion/nav.php'; ?>
 
-<main class="main-container">
+<div class="main-container">
 
-  <!-- SUMMARY CARDS -->
-  <section class="grid">
+<!-- ================= STATS ================= -->
+<section class="grid">
+<div class="card"><h3>Total Customers</h3><div class="value"><?= $total_customers ?></div></div>
+<div class="card"><h3>Total Items</h3><div class="value"><?= $total_items ?></div></div>
+<div class="card"><h3>Total Orders</h3><div class="value"><?= $total_orders ?></div></div>
+<div class="card"><h3>Total Revenue</h3><div class="value">₱<?= number_format($total_revenue,2) ?></div></div>
+</section>
 
-    <div class="card">
-      <h3>Total Customers</h3>
-      <div class="value"><?php echo $total_customers; ?></div>
-    </div>
+<!-- ================= RECENT ORDERS ================= -->
+<h2 class="section-title">Recent Orders</h2>
+<table>
+<tr><th>Order #</th><th>Customer</th><th>Date</th><th>Status</th><th>Total</th></tr>
+<?php while($o = $recent_orders->fetch_assoc()): ?>
+<tr>
+<td>#<?= $o['order_id'] ?></td>
+<td><?= $o['username'] ?></td>
+<td><?= $o['order_date'] ?></td>
+<td>
+<?php if($o['order_status']=="Completed"): ?>
+<span class="status-completed">Completed</span>
+<?php else: ?>
+<?= $o['order_status'] ?><br>
+<a class="btn-small" href="complete_order.php?id=<?= $o['order_id'] ?>">Mark Completed</a>
+<?php endif; ?>
+</td>
+<td>₱<?= number_format($o['total_amount'],2) ?></td>
+</tr>
+<?php endwhile; ?>
+</table>
 
-    <div class="card">
-      <h3>Total Items</h3>
-      <div class="value"><?php echo $total_items; ?></div>
-    </div>
+<!-- ================= RENTAL MONITORING (NEW) ================= -->
+<h2 class="section-title mt-4">Rental Return Monitoring</h2>
 
-    <div class="card">
-      <h3>Total Orders</h3>
-      <div class="value"><?php echo $total_orders; ?></div>
-    </div>
+<table>
+<tr>
+    <th>Order #</th>
+    <th>Item</th>
+    <th>Customer</th>
+    <th>Return Status</th>
+    <th>Action</th>
+</tr>
 
-    <div class="card">
-      <h3>Total Revenue (Paid)</h3>
-      <div class="value">₱<?php echo number_format($total_revenue, 2); ?></div>
-    </div>
+<?php while($r = $rentals->fetch_assoc()): ?>
+<tr>
+<td>#<?= $r['order_id'] ?></td>
+<td><?= htmlspecialchars($r['item_name']) ?></td>
+<td><?= htmlspecialchars($r['username']) ?></td>
+<td>
 
-    <div class="card">
-      <h3>Pending Payments</h3>
-      <div class="value">₱<?php echo number_format($pending_payments, 2); ?></div>
-    </div>
+<?php if($r['return_status'] === "Returned"): ?>
+    <span class="status-returned">Returned</span>
+<?php else: ?>
+    <span class="status-not-returned">Not Returned</span>
+<?php endif; ?>
 
-    <div class="card">
-      <h3>Inventory Value</h3>
-      <div class="value">₱<?php echo number_format($inventory_value, 2); ?></div>
-    </div>
 
-    <div class="card">
-      <h3>Out of Stock</h3>
-      <div class="value"><?php echo $out_of_stock; ?></div>
-    </div>
+</td>
+<td>
+<?php if($r['return_status']=="Not Returned"): ?>
+<a class="btn-small" href="mark_returned.php?id=<?= $r['order_detail_id'] ?>" 
+onclick="return confirm('Mark this rental as returned?')">Mark Returned</a>
+<?php else: ?>
+—
+<?php endif; ?>
+</td>
+</tr>
+<?php endwhile; ?>
+</table>
 
-    <div class="card">
-      <h3>Low Stock</h3>
-      <div class="value"><?php echo $low_stock; ?></div>
-    </div>
+<!-- ================= INVENTORY ================= -->
+<h2 class="section-title mt-4">Inventory Overview</h2>
+<table>
+<tr><th>Item</th><th>Stock</th><th>Purchase</th><th>Rental</th></tr>
+<?php while($i=$items->fetch_assoc()): ?>
+<tr>
+<td><?= $i['name'] ?></td>
+<td><?= $i['stock'] ?></td>
+<td>₱<?= number_format($i['purchase_price'],2) ?></td>
+<td>₱<?= number_format($i['rental_price'],2) ?></td>
+</tr>
+<?php endwhile; ?>
+</table>
 
-  </section>
-
-  <!-- RECENT ORDERS -->
-  <h2>Recent Orders</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Order #</th>
-        <th>Customer</th>
-        <th>Date</th>
-        <th>Status</th>
-        <th>Total (₱)</th>
-      </tr>
-    </thead>
-    <tbody>
-      <?php foreach ($recent_orders as $o): ?>
-      <tr>
-        <td>#<?php echo $o['order_id']; ?></td>
-        <td><?php echo htmlspecialchars($o['username']); ?></td>
-        <td><?php echo $o['order_date']; ?></td>
-        <td><?php echo $o['order_status']; ?></td>
-        <td><?php echo number_format($o['total_amount'], 2); ?></td>
-      </tr>
-      <?php endforeach; ?>
-    </tbody>
-  </table>
-
-  <!-- INVENTORY -->
-  <h2>Inventory Overview</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Item</th>
-        <th>Stock</th>
-        <th>Purchase Price</th>
-        <th>Rental Price</th>
-      </tr>
-    </thead>
-    <tbody>
-      <?php foreach ($items as $i): ?>
-      <tr>
-        <td><?php echo htmlspecialchars($i['name']); ?></td>
-        <td>
-          <?php echo $i['stock']; ?>
-          <?php if ($i['stock'] <= 2): ?>
-            <span class="badge-low">Low</span>
-          <?php endif; ?>
-        </td>
-        <td>₱<?php echo number_format($i['purchase_price'], 2); ?></td>
-        <td>₱<?php echo number_format($i['rental_price'], 2); ?></td>
-      </tr>
-      <?php endforeach; ?>
-    </tbody>
-  </table>
-
-</main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
